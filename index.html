@@ -714,8 +714,50 @@ function escapeHtml(s) {
 }
 
 /* ========================================================================
-   8) PDF ERSTELLEN
+   8) PDF ERSTELLEN  – kompaktes 2-Spalten-Layout, ASCII-sichere Formeln
    ======================================================================== */
+// jsPDF Standard-Helvetica unterstützt einige Unicode-Zeichen nicht.
+// Wir wandeln Formelzeichen in eindeutige ASCII-Schreibweise um.
+function pdfSafe(s) {
+  return s
+    .replace(/−/g, '-')                  // Unicode-Minus → Bindestrich
+    .replace(/√(\d+)/g, 'sqrt($1)')      // √144  → sqrt(144)
+    .replace(/√/g, 'sqrt')
+    .replace(/π\s*≈\s*3[,.]14/g, 'pi = 3,14')
+    .replace(/π/g, 'pi')
+    .replace(/≈/g, '=')
+    .replace(/€/g, 'EUR')                // Euro-Zeichen → EUR (rendert sicher)
+    .replace(/\|/g, ';');                // P(x|y) → P(x;y) – klarer in Mathe
+}
+
+function drawHeader(doc, pageWidth, vorname, name, klasse, datum, withDetails) {
+  // Blauer Header-Balken
+  doc.setFillColor(30, 77, 143);
+  doc.rect(0, 0, pageWidth, 22, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.text('Mathematik Uebungsblatt  -  4TPST / DP1 / DP2', 10, 10);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.text('100 Aufgaben  -  Curriculum Luxembourg (Horaires et programmes)', 10, 16);
+
+  if (withDetails) {
+    // Schülerblock direkt unter dem Header
+    doc.setTextColor(31, 41, 51);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text(`Name: ${name}`, 10, 28);
+    doc.text(`Vorname: ${vorname}`, 70, 28);
+    doc.text(`Klasse: ${klasse}`, 130, 28);
+    doc.text(`Datum: ${datum}`, 165, 28);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Note: ____ / 100', 10, 33);
+    doc.setDrawColor(216, 224, 235);
+    doc.line(10, 35, pageWidth - 10, 35);
+  }
+}
+
 function erstellePDF() {
   if (!validateForm()) return;
   if (aktuelleAuswahl.length === 0) {
@@ -732,68 +774,67 @@ function erstellePDF() {
 
   const pageWidth = 210;
   const pageHeight = 297;
-  const marginX = 15;
-  const usableWidth = pageWidth - 2 * marginX;
-  let y = 15;
+  const marginX = 10;
+  const colGap = 6;
+  const colWidth = (pageWidth - 2 * marginX - colGap) / 2;  // ca. 94 mm
+  const colTopY = 40;            // Start unter Schülerblock
+  const colMaxY = pageHeight - 12;
 
-  // Header
-  doc.setFillColor(30, 77, 143);
-  doc.rect(0, 0, pageWidth, 28, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.text('Mathematik Übungsblatt', marginX, 12);
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Niveau: 4TPST / DP1 / DP2  ·  Mathematik & MINT', marginX, 19);
-  doc.text('100 Aufgaben – Curriculum Luxembourg (Horaires et programmes)', marginX, 24);
-  y = 36;
+  // Erste Seite mit Schülerangaben
+  drawHeader(doc, pageWidth, vorname, name, klasse, datum, true);
 
-  // Schülerangaben
-  doc.setTextColor(31, 41, 51);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text('Schülerangaben:', marginX, y);
-  y += 5;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.text(`Vorname: ${vorname}`, marginX, y);
-  doc.text(`Name: ${name}`, marginX + 65, y);
-  doc.text(`Klasse: ${klasse}`, marginX + 130, y);
-  y += 5;
-  doc.text(`Datum: ${datum}`, marginX, y);
-  doc.text(`Note: ____ / 100`, marginX + 130, y);
-  y += 7;
-  doc.setDrawColor(216, 224, 235);
-  doc.line(marginX, y, pageWidth - marginX, y);
-  y += 6;
-
-  // Aufgaben
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
+  let col = 0;
+  let y = colTopY;
 
   aktuelleAuswahl.forEach((a, idx) => {
-    const num = (idx + 1).toString().padStart(3, ' ');
-    const text = `${num}. [${a.kategorie}]  ${a.text}`;
-    const lines = doc.splitTextToSize(text, usableWidth);
-    const blockHeight = lines.length * 4.5 + 8; // Aufgabe + Antwortbereich
+    const num = (idx + 1).toString();
+    const cleanText = pdfSafe(a.text);
+    const text = `${num}. ${cleanText}`;
 
-    if (y + blockHeight > pageHeight - 18) {
-      addFooter(doc, pageWidth, pageHeight);
-      doc.addPage();
-      y = 15;
+    // Kategorie als kleines Label oberhalb
+    doc.setFontSize(7);
+    const kat = `[${a.kategorie}]`;
+
+    // Aufgabentext mit 9 pt
+    doc.setFontSize(9);
+    const lines = doc.splitTextToSize(text, colWidth);
+    const blockHeight = 3 /*Kategorie*/ + lines.length * 3.6 + 4 /*Linie+Abstand*/;
+
+    // Spalten-/Seitenumbruch?
+    if (y + blockHeight > colMaxY) {
+      col++;
+      y = colTopY;
+      if (col >= 2) {
+        addFooter(doc, pageWidth, pageHeight);
+        doc.addPage();
+        drawHeader(doc, pageWidth, vorname, name, klasse, datum, false);
+        col = 0;
+        y = 28;
+      }
     }
 
-    doc.setTextColor(31, 41, 51);
-    doc.text(lines, marginX, y);
-    y += lines.length * 4.5;
+    const xStart = marginX + col * (colWidth + colGap);
 
-    // Antwortlinie
-    doc.setDrawColor(180, 190, 205);
-    doc.setLineDashPattern([0.6, 1.2], 0);
-    doc.line(marginX + 5, y + 3, pageWidth - marginX, y + 3);
+    // 1) Kategorie (klein, grau)
+    doc.setFontSize(6.8);
+    doc.setTextColor(120, 130, 145);
+    doc.setFont('helvetica', 'normal');
+    doc.text(kat, xStart, y);
+    y += 2.6;
+
+    // 2) Aufgabentext
+    doc.setFontSize(9);
+    doc.setTextColor(20, 25, 35);
+    doc.setFont('helvetica', 'normal');
+    doc.text(lines, xStart, y);
+    y += lines.length * 3.6 + 0.8;
+
+    // 3) Antwortlinie (gepunktet)
+    doc.setDrawColor(170, 180, 195);
+    doc.setLineDashPattern([0.5, 1.0], 0);
+    doc.line(xStart + 3, y, xStart + colWidth, y);
     doc.setLineDashPattern([], 0);
-    y += 7;
+    y += 3.5;
   });
 
   addFooter(doc, pageWidth, pageHeight);
@@ -802,22 +843,22 @@ function erstellePDF() {
   const pageCount = doc.internal.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
-    doc.setFontSize(8);
+    doc.setFontSize(7.5);
     doc.setTextColor(120, 130, 145);
-    doc.text(`Seite ${i} / ${pageCount}`, pageWidth - marginX, pageHeight - 8, { align: 'right' });
+    doc.text(`Seite ${i} / ${pageCount}`, pageWidth - marginX, pageHeight - 6, { align: 'right' });
   }
 
   const dateiname = `Mathe_${name}_${vorname}_${klasse}_${datum.replace(/\./g,'-')}.pdf`;
   doc.save(dateiname);
-  showToast('✅ PDF wurde erfolgreich erstellt.');
+  showToast('PDF wurde erstellt.');
 }
 
 function addFooter(doc, pageWidth, pageHeight) {
   doc.setDrawColor(216, 224, 235);
-  doc.line(15, pageHeight - 14, pageWidth - 15, pageHeight - 14);
-  doc.setFontSize(8);
+  doc.line(10, pageHeight - 10, pageWidth - 10, pageHeight - 10);
+  doc.setFontSize(7.5);
   doc.setTextColor(120, 130, 145);
-  doc.text('Kontakt: Tom Bleyer', 15, pageHeight - 9);
+  doc.text('Kontakt: Tom Bleyer', 10, pageHeight - 6);
 }
 
 /* ========================================================================
